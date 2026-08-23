@@ -1,0 +1,188 @@
+# =============================================================================
+# Ouroboros v7.1 — ECC Orchestrator Configuration
+# =============================================================================
+#
+# Central configuration for the Extensible Code Composer (ECC) orchestrator.
+# Defines the model, budget, worktrees, agents, MCP servers, hooks, and
+# environment variables for the autonomous code refactoring pipeline.
+#
+# Usage:
+#   ecc run --config .ecc/config.yaml --phase 0.5 --non-interactive
+# =============================================================================
+
+project: ouroboros-v7
+# All model traffic (orchestrator + agents + constraint validation) goes to the
+# ox-alpha OpenAI-compatible API. Configure via environment variables:
+#   OX_ALPHA_BASE_URL  — e.g. https://api.example.com/v1
+#   OX_ALPHA_API_KEY   — bearer token
+#   OX_ALPHA_MODEL     — model id (default: ox-alpha)
+orchestrator_model: ${OX_ALPHA_MODEL:-ox-alpha}
+budget_limit: ${ECC_BUDGET:-0.00}  # USD — 0 disables the limit (ox-alpha via OpenRouter is free); set e.g. 10.00 to enforce one
+
+# ---------------------------------------------------------------------------
+# Worktrees — one per repository, each mapped to a container path
+# ---------------------------------------------------------------------------
+worktrees:
+  ouroboros-core:
+    path: /workspace/ouroboros-core
+    description: >-
+      Python/PyTorch diffusion engine — Modules 1 (Tokenizer), 3 (Attention),
+      and 4 (RL Reward). Contains the core model architecture, training loop,
+      and fuzzy proxy reward system.
+
+  ouroboros-triton:
+    path: /workspace/ouroboros-triton
+    description: >-
+      C++/Triton bare-metal engine — Modules 2 (Block Memory) and 6 (Serving).
+      Manages VRAM via 64-token block tables, fused Triton kernels, CUDA graph
+      capture, and the Supervisor-Worker HA serving layer.
+
+  ouroboros-dfg:
+    path: /workspace/ouroboros-dfg
+    description: >-
+      Rust semantic verifier — Module 5 (DFG Verification). Extracts SSA-form
+      Data Flow Graphs via mypy/clang frontends and verifies semantic
+      equivalence using egg equality saturation.
+
+# ---------------------------------------------------------------------------
+# Agents — three specialists, each bound to one worktree
+# ---------------------------------------------------------------------------
+agents:
+  tdd-guide:
+    model: ${OX_ALPHA_MODEL:-ox-alpha}
+    worktree: ouroboros-core
+    allowed_tools:
+      - bash
+      - write_file
+      - read_file
+      - edit_file
+    mcp_servers:
+      - codegraph_server
+      - context7
+    system_prompt: |
+      You are tdd-guide, the Python/PyTorch specialist for Ouroboros v7.1.
+      You own Modules 1 (Tokenizer), 3 (Attention), and 4 (RL Reward) in the
+      ouroboros-core repository.
+
+      INVIOLABLE CONSTRAINTS:
+      1. NEVER use 2D AST-Relative RoPE. Use standard 1D RoPE for lexical
+         sequence order plus Additive AST Graph Bias (shortest-path scalar
+         b_phi(i,j) injected into pre-softmax attention logits).
+      2. Phantom Padding uses L_max = 1024 tokens.
+      3. The RL reward signal uses the exact Fuzzy Proxy formula from the paper:
+         Reward = (0.1 * Parses) + (0.3 * TypeChecks) + (0.6 * PassesTests)
+
+      Before writing ANY attention or tokenizer code, call the
+      validate_constraint MCP tool with a description of your planned change.
+
+      Write tests FIRST (TDD). Every function must have a corresponding
+      pytest test before implementation.
+
+  systems-engineer:
+    model: ${OX_ALPHA_MODEL:-ox-alpha}
+    worktree: ouroboros-triton
+    allowed_tools:
+      - bash
+      - write_file
+      - read_file
+      - edit_file
+    mcp_servers:
+      - codegraph_server
+      - context7
+    system_prompt: |
+      You are systems-engineer, the C++/Triton bare-metal specialist for
+      Ouroboros v7.1. You own Modules 2 (Block Memory) and 6 (Serving) in the
+      ouroboros-triton repository.
+
+      INVIOLABLE CONSTRAINTS:
+      1. NEVER use PyTorch tensor reshapes for dynamic sequence expansion.
+         Use 64-token fixed-size physical blocks managed via a C++
+         array-backed linked list (block table) with fused Triton
+         pointer-chasing attention kernels (make_block_ptr).
+      2. On Grace Blackwell sm_121a: wrap CUDA graph capture in try-catch
+         with a dummy tensor AOT warmup pass to force TLB page mapping
+         before real graph capture.
+      3. The serving layer uses Supervisor-Worker HA: the Supervisor process
+         owns the KV-cache and block table; Workers are stateless and
+         restartable via SupervisorD.
+
+      Before writing ANY memory management or CUDA graph code, call the
+      validate_constraint MCP tool with a description of your planned change.
+
+  rust-specialist:
+    model: ${OX_ALPHA_MODEL:-ox-alpha}
+    worktree: ouroboros-dfg
+    allowed_tools:
+      - bash
+      - write_file
+      - read_file
+      - edit_file
+    mcp_servers:
+      - codegraph_server
+      - context7
+    system_prompt: |
+      You are rust-specialist, the Rust semantic verification specialist for
+      Ouroboros v7.1. You own Module 5 (DFG Verification) in the
+      ouroboros-dfg repository.
+
+      INVIOLABLE CONSTRAINTS:
+      1. egg::Runner limits MUST be hardcoded:
+         - IterationLimit(5000)
+         - TimeLimit(Duration::from_secs(10))
+         - NodeLimit(1_000_000)
+         - BackoffScheduler { match_limit: 5000, ban_length: 3 }
+      2. Equality saturation runs as an async background CPU task — NEVER
+         block the GPU inference/training loop.
+      3. SSA DFG extraction uses mypy (Python) and libclang (C++) frontends.
+      4. Verification results stream via a telemetry channel to the
+         orchestrator for real-time monitoring.
+
+      Before writing ANY egg rewrite rules or DFG extraction code, call the
+      validate_constraint MCP tool with a description of your planned change.
+
+# ---------------------------------------------------------------------------
+# MCP Servers — shared across all agents
+# ---------------------------------------------------------------------------
+mcp_servers:
+  codegraph_server:
+    command: python3
+    args:
+      - .mcp/servers/codegraph_server.py
+    description: >-
+      Constraint validation via the ox-alpha OpenAI-compatible API. Checks
+      proposed code changes against laws.json before allowing writes.
+    env:
+      OX_ALPHA_API_KEY: ${OX_ALPHA_API_KEY}
+      OX_ALPHA_BASE_URL: ${OX_ALPHA_BASE_URL}
+      OX_ALPHA_MODEL: ${OX_ALPHA_MODEL:-ox-alpha}
+
+  context7:
+    command: npx
+    args:
+      - -y
+      - "@context7/mcp-server"
+    description: >-
+      Documentation lookup server. Provides API references for Triton 3.2.0,
+      PyTorch 2.6, egg 0.9.5, and other project dependencies.
+
+# ---------------------------------------------------------------------------
+# Hooks — post-tool-use crash learning
+# ---------------------------------------------------------------------------
+hooks:
+  post_tool_use:
+    command: python3
+    args:
+      - .ecc/hooks/post_tool_use.py
+    description: >-
+      Inspects stdout/stderr after every tool invocation for CUDA crash
+      signatures. On detection, writes crash instincts to persistent memory
+      and prints a system alert for SupervisorD.
+
+# ---------------------------------------------------------------------------
+# Environment variables — injected from host
+# ---------------------------------------------------------------------------
+environment:
+  OX_ALPHA_BASE_URL: ${OX_ALPHA_BASE_URL}
+  OX_ALPHA_API_KEY: ${OX_ALPHA_API_KEY}
+  OX_ALPHA_MODEL: ${OX_ALPHA_MODEL:-ox-alpha}
+  ECC_BUDGET: ${ECC_BUDGET:-10.00}

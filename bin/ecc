@@ -1,0 +1,483 @@
+#!/usr/bin/env python3
+"""ecc — Minimal Extensible Code Composer runner for Ouroboros v7.1.
+
+Implements enough of the ECC orchestrator contract for supervised,
+non-interactive runs driven entirely by an OpenAI-compatible ox-alpha API:
+
+    ecc run --config .ecc/config.yaml --phase 0.5 --non-interactive
+
+Per configured agent it:
+  1. Gathers a lightweight worktree survey (file listing).
+  2. Validates the planned change against memory_seeds/laws.json via the
+     same validation logic as the codegraph MCP server.
+  3. Requests a Phase report from the model (system prompt from config.yaml).
+  4. Writes .ecc/reports/<agent>.phase<phase>.md and feeds tool output
+     through the post_tool_use crash-detection hook.
+
+Budget: token usage is tracked per agent; estimated USD cost uses
+OX_ALPHA_PRICE_INPUT_PER_MTOK / OX_ALPHA_PRICE_OUTPUT_PER_MTOK (default 0 —
+free/local endpoints). A budget_limit <= 0 (the default) disables enforcement;
+set ECC_BUDGET (e.g. "10.00") to abort once estimated spend crosses the cap.
+
+Environment:
+    OX_ALPHA_BASE_URL   e.g. https://api.example.com/v1        (required)
+    OX_ALPHA_API_KEY    bearer token                           (required)
+    OX_ALPHA_MODEL      model id (default: ox-alpha)
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+import requests
+import yaml
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from office_bridge import office_agent_status, office_event, office_status
+except Exception:  # noqa: BLE001 — visualizer is optional
+    def office_agent_status(*a, **k): return False
+    def office_event(*a, **k): return False
+    def office_status(*a, **k): return False
+
+REPO_ROOT_DEFAULT = Path(__file__).resolve().parent.parent
+ENV_PATTERN = re.compile(r"\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?::-(?P<default>[^}]*))?\}")
+
+SKIP_DIRS = {".git", "__pycache__", "node_modules", "target", ".venv", "venv", "dist", "build"}
+MAX_LISTED_FILES = 120
+
+
+class EccError(Exception):
+    """Fatal configuration or runtime error."""
+
+
+# ---------------------------------------------------------------------------
+# Config loading with ${VAR:-default} expansion
+# ---------------------------------------------------------------------------
+
+
+def _expand_env(value):
+    """Recursively expand ${VAR} / ${VAR:-default} in config values."""
+    if isinstance(value, str):
+        return ENV_PATTERN.sub(
+            lambda m: os.environ.get(m.group("name"), m.group("default") or ""), value
+        )
+    if isinstance(value, dict):
+        return {k: _expand_env(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_expand_env(v) for v in value]
+    return value
+
+
+def load_config(path: str) -> dict:
+    cfg_path = Path(path)
+    if not cfg_path.is_file():
+        raise EccError(f"config not found: {cfg_path}")
+    with open(cfg_path, "r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+    return _expand_env(cfg)
+
+
+def parse_budget(raw) -> float:
+    """Parse the budget limit in USD. A value <= 0 disables budget enforcement."""
+    if raw is None:
+        raw = os.environ.get("ECC_BUDGET", "0.00")
+    text = str(raw).replace("$", "").replace("USD", "").strip()
+    try:
+        return float(text)
+    except ValueError as exc:
+        raise EccError(f"invalid budget_limit: {raw!r}") from exc
+
+
+# ---------------------------------------------------------------------------
+# ox-alpha client (OpenAI-compatible /chat/completions)
+# ---------------------------------------------------------------------------
+
+
+class OxAlphaClient:
+    def __init__(self) -> None:
+        self.base_url = os.environ.get("OX_ALPHA_BASE_URL", "").rstrip("/")
+        self.api_key = os.environ.get("OX_ALPHA_API_KEY", "")
+        self.model = os.environ.get("OX_ALPHA_MODEL", "ox-alpha")
+        if not self.base_url or not self.api_key:
+            raise EccError(
+                "OX_ALPHA_BASE_URL and OX_ALPHA_API_KEY must be set in the environment"
+            )
+        self.price_in = float(os.environ.get("OX_ALPHA_PRICE_INPUT_PER_MTOK", "0"))
+        self.price_out = float(os.environ.get("OX_ALPHA_PRICE_OUTPUT_PER_MTOK", "0"))
+
+    def chat(self, system: str, user: str, max_tokens: int = 4096,
+             temperature: float = 0.2) -> tuple[str, dict]:
+        # NOTE: stealth/ox-alpha is a reasoning model — reasoning cannot be
+        # disabled and consumes part of max_tokens. Keep headroom (>= 2048)
+        # or `content` may come back empty.
+        payload = {
+            "model": self.model,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        last_exc: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                resp = requests.post(
+                    f"{self.base_url}/chat/completions",
+                    json=payload,
+                    headers=headers,
+                    timeout=float(os.environ.get("OX_ALPHA_TIMEOUT_S", "180")),
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                message = data["choices"][0]["message"]
+                content = (message.get("content") or "").strip()
+                if not content:
+                    reasoning = (message.get("reasoning") or "").strip()
+                    if reasoning:
+                        content = ("[reasoning-only response — max_tokens likely too small]\n\n"
+                                   + reasoning)
+                usage = data.get("usage") or {}
+                return content, usage
+            except (requests.RequestException, KeyError, IndexError, ValueError) as exc:
+                last_exc = exc
+                if attempt < 3:
+                    time.sleep(2 * attempt)
+        raise EccError(f"ox-alpha request failed after 3 attempts: {last_exc}")
+
+    def estimate_cost(self, usage: dict) -> float:
+        p_in = usage.get("prompt_tokens", 0) or 0
+        p_out = usage.get("completion_tokens", 0) or 0
+        return (p_in * self.price_in + p_out * self.price_out) / 1_000_000
+
+
+# ---------------------------------------------------------------------------
+# Constraint validation (reuses the codegraph MCP server's logic)
+# ---------------------------------------------------------------------------
+
+
+def validate_change(repo_root: Path, change_description: str, target_repo: str) -> str:
+    servers_dir = repo_root / ".mcp" / "servers"
+    try:
+        sys.path.insert(0, str(servers_dir))
+        import codegraph_server  # type: ignore
+
+        return codegraph_server.validate_constraint(change_description, target_repo)
+    except Exception as exc:  # noqa: BLE001 — validator problems must not kill the run
+        return f"ALLOW (validator unavailable: {exc})"
+
+
+# ---------------------------------------------------------------------------
+# Worktree survey
+# ---------------------------------------------------------------------------
+
+
+def worktree_survey(path: Path) -> str:
+    if not path.is_dir():
+        return f"(worktree not present at {path})"
+    files: list[str] = []
+    for root, dirs, names in os.walk(path):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        for name in names:
+            rel = Path(root, name).relative_to(path)
+            files.append(str(rel))
+            if len(files) >= MAX_LISTED_FILES:
+                break
+        if len(files) >= MAX_LISTED_FILES:
+            break
+    listing = "\n".join(sorted(files))
+    more = "" if len(files) < MAX_LISTED_FILES else f"\n… (truncated at {MAX_LISTED_FILES} files)"
+    return f"{path} — {len(files)}+ files:\n{listing}{more}"
+
+
+# ---------------------------------------------------------------------------
+# post_tool_use hook passthrough (crash learning)
+# ---------------------------------------------------------------------------
+
+
+def run_crash_hook(repo_root: Path, stdout_text: str, stderr_text: str) -> None:
+    hook = repo_root / ".ecc" / "hooks" / "post_tool_use.py"
+    if not hook.is_file():
+        return
+    payload = json.dumps({
+        "stdout": stdout_text[-4000:],
+        "stderr": stderr_text[-4000:],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
+    try:
+        subprocess.run(
+            [sys.executable, str(hook)],
+            input=payload,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Agent execution
+# ---------------------------------------------------------------------------
+
+PHASE_TASK = (
+    "You are executing Phase {phase} of the Ouroboros v7.1 pipeline.\n"
+    "Produce a Phase {phase} report for your repository in markdown with sections:\n"
+    "## Current State\n## Constraint Risk Assessment\n## Phase Plan\n## First Concrete Steps\n"
+    "Be specific and reference real files from the survey below.\n\n"
+    "=== WORKTREE SURVEY ===\n{survey}"
+)
+
+
+def run_agent(name: str, spec: dict, phase: str, repo_root: Path,
+              client: OxAlphaClient, reports_dir: Path) -> dict:
+    worktree_name = spec.get("worktree", name)
+    container_path = spec.get("_worktree_path") or f"/workspace/{worktree_name}"
+
+    print(f"[ecc] agent {name}: worktree={worktree_name}", flush=True)
+    office_agent_status(name, "working", f"Phase {phase}: surveying {worktree_name}")
+
+    # 1. Constraint validation of the phase intent.
+    office_agent_status("codegraph", "working", "Validating against laws.json")
+    intent = f"Phase {phase} orchestration pass over {worktree_name} ({spec.get('description', '').strip()[:200]})"
+    decision = validate_change(repo_root, intent, worktree_name)
+    print(f"[ecc] agent {name}: validate_constraint → {decision.splitlines()[0][:100]}", flush=True)
+    if decision.startswith("BLOCK"):
+        office_agent_status("codegraph", "blocked", decision[:80])
+        office_agent_status(name, "blocked", "constraint BLOCK — see codegraph")
+    else:
+        office_agent_status("codegraph", "idle")
+
+    # 2. Model call with the agent's own system prompt.
+    survey = worktree_survey(Path(container_path))
+    content, usage = client.chat(
+        system=str(spec.get("system_prompt", f"You are {name}, an Ouroboros v7.1 specialist.")),
+        user=PHASE_TASK.format(phase=phase, survey=survey),
+    )
+
+    # 3. Persist report.
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    report_path = reports_dir / f"{name}.phase{phase}.md"
+    cost = client.estimate_cost(usage)
+    header = (
+        f"# {name} — Phase {phase} report\n\n"
+        f"- model: `{client.model}`\n"
+        f"- constraint check: {decision.strip()}\n"
+        f"- tokens: {usage.get('prompt_tokens', '?')} in / "
+        f"{usage.get('completion_tokens', '?')} out (est. ${cost:.4f})\n\n"
+    )
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write(header + content.strip() + "\n")
+    print(f"[ecc] agent {name}: report → {report_path}", flush=True)
+    office_agent_status(name, "done", f"report: {report_path.name}")
+
+    # 4. Crash-learning hook on everything the step produced.
+    run_crash_hook(repo_root, header + content, "")
+
+    return {
+        "agent": name,
+        "decision": decision.splitlines()[0].strip(),
+        "tokens_in": usage.get("prompt_tokens", 0),
+        "tokens_out": usage.get("completion_tokens", 0),
+        "cost_usd": cost,
+        "report": str(report_path),
+    }
+
+
+# ---------------------------------------------------------------------------
+# verify-pair: expression-level equivalence via the PyO3 verifier (Module 5)
+# ---------------------------------------------------------------------------
+
+VERIFY_LOG_NAME = "verify_log.jsonl"
+
+
+def _load_pyo3_engine():
+    """Import the ouroboros_dfg wheel; return engine or raise EccError."""
+    try:
+        import ouroboros_dfg  # noqa: F401 — installed via maturin wheel
+    except ImportError as exc:
+        raise EccError(
+            "ouroboros_dfg wheel not importable — build with "
+            "`cd ../ouroboros-dfg && python3 -m maturin build --release "
+            "--features pyo3-ext && python3 -m pip install --user "
+            "--break-system-packages target/wheels/*.whl`"
+        ) from exc
+    return ouroboros_dfg.PyEggEngine()
+
+
+def _verify_one(engine, before_path: str, after_path: str,
+                job_id: int, config_path: str) -> dict:
+    """Run one PyO3 equivalence check; append to verify_log.jsonl; return data."""
+    before = Path(before_path).read_text(encoding="utf-8")
+    after = Path(after_path).read_text(encoding="utf-8")
+
+    started = time.time()
+    res = engine.verify(before, after)          # {'verdict': ..., 'iterations': ..., 'nodes': ...}
+    elapsed_ms = int((time.time() - started) * 1000)
+    verdict = res.get("verdict", "unproven")
+    data = {
+        "job_id": job_id,
+        "before": before_path,
+        "after": after_path,
+        "verdict": verdict,
+        "verdict_kind": "green" if verdict == "equivalent" else "yellow",
+        "iterations": res.get("iterations", 0),
+        "nodes": res.get("nodes", 0),
+        "elapsed_ms": elapsed_ms,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    print(json.dumps(data))
+
+    log_path = Path(config_path).resolve().parent / "reports" / VERIFY_LOG_NAME
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(data) + "\n")
+    return data
+
+
+def cmd_verify_pair(args) -> int:
+    """Verify two Module-5 DSL expression files for semantic equivalence."""
+    engine = _load_pyo3_engine()
+    data = _verify_one(engine, args.before, args.after, args.job_id, args.config)
+    print(f"[ecc] verdict appended to "
+          f"{Path(args.config).resolve().parent / 'reports' / VERIFY_LOG_NAME}",
+          flush=True)
+    return 0 if data["verdict_kind"] == "green" else 3
+
+
+def cmd_verify_manifest(args) -> int:
+    """Run every pair in the verify manifest; aggregate green/yellow."""
+    manifest_path = Path(args.manifest)
+    if not manifest_path.is_file():
+        raise EccError(f"manifest not found: {manifest_path}")
+    entries = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(entries, list):
+        raise EccError("manifest must be a JSON array of {job_id, before, after}")
+
+    engine = _load_pyo3_engine()
+    greens = yellows = 0
+    for i, entry in enumerate(entries):
+        data = _verify_one(engine, entry["before"], entry["after"],
+                           int(entry.get("job_id", i)), args.config)
+        if data["verdict_kind"] == "green":
+            greens += 1
+        else:
+            yellows += 1
+
+    total = greens + yellows
+    ratio = (greens / total) if total else None
+    print(f"[ecc] verify manifest: {greens} green / {yellows} yellow"
+          f" (ratio {'%.3f' % ratio if ratio is not None else 'n/a'})", flush=True)
+    office_status({"codegraph": "idle"},
+                  label=f"verify gate: {greens}G/{yellows}Y")
+    office_event("test-passed" if yellows == 0 else "custom")
+    return 0 if yellows == 0 else 3
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="ecc", description="Ouroboros v7.1 orchestrator runner")
+    sub = parser.add_subparsers(dest="command", required=True)
+    run_p = sub.add_parser("run", help="run a pipeline phase")
+    run_p.add_argument("--config", required=True, help="path to .ecc/config.yaml")
+    run_p.add_argument("--phase", default="0.5", help="pipeline phase tag (default: 0.5)")
+    run_p.add_argument("--non-interactive", action="store_true", help="never prompt; abort on budget exceed")
+    vp = sub.add_parser("verify-pair", help="Module 5 equivalence check on two DSL files")
+    vp.add_argument("--before", required=True, help="file with `before` s-expression")
+    vp.add_argument("--after", required=True, help="file with `after` s-expression")
+    vp.add_argument("--config", default=str(REPO_ROOT_DEFAULT / ".ecc" / "config.yaml"),
+                    help="config path; reports dir derives from it")
+    vp.add_argument("--job-id", type=int, default=0)
+    vm = sub.add_parser("verify-manifest", help="batch equivalence gate over a JSON manifest")
+    vm.add_argument("--manifest", required=True, help="JSON array of {job_id, before, after}")
+    vm.add_argument("--config", default=str(REPO_ROOT_DEFAULT / ".ecc" / "config.yaml"))
+    args = parser.parse_args()
+
+    if args.command == "verify-pair":
+        try:
+            return cmd_verify_pair(args)
+        except EccError as exc:
+            print(f"[ecc] FATAL: {exc}", file=sys.stderr, flush=True)
+            return 2
+    if args.command == "verify-manifest":
+        try:
+            return cmd_verify_manifest(args)
+        except EccError as exc:
+            print(f"[ecc] FATAL: {exc}", file=sys.stderr, flush=True)
+            return 2
+
+    started = time.time()
+    try:
+        cfg = load_config(args.config)
+    except EccError as exc:
+        print(f"[ecc] FATAL: {exc}", file=sys.stderr, flush=True)
+        return 2
+
+    repo_root = Path(args.config).resolve().parent.parent
+    budget = parse_budget(cfg.get("budget_limit"))
+    budget_enabled = budget > 0
+
+    # Resolve worktree paths relative to the host layout (/workspace/<name> inside
+    # the container; sibling directories outside it).
+    wt_root = Path("/workspace")
+    if not wt_root.is_dir():
+        wt_root = repo_root.parent
+    for name, spec in (cfg.get("agents") or {}).items():
+        spec["_worktree_path"] = str(wt_root / spec.get("worktree", name))
+
+    try:
+        client = OxAlphaClient()
+    except EccError as exc:
+        print(f"[ecc] FATAL: {exc}", file=sys.stderr, flush=True)
+        return 2
+
+    print(f"[ecc] ouroboros-v7 orchestrator | model={client.model} | phase={args.phase} "
+          f"| budget={'${:.2f}'.format(budget) if budget_enabled else 'disabled (free endpoint)'}",
+          flush=True)
+    office_status({"orchestrator": "planning"}, workflow=f"Phase {args.phase}")
+
+    spent = 0.0
+    results = []
+    for name, spec in (cfg.get("agents") or {}).items():
+        if budget_enabled and spent > budget:
+            msg = (f"[ecc] BUDGET EXCEEDED (est. ${spent:.2f} > ${budget:.2f}) — "
+                   f"skipping remaining agents")
+            print(msg, file=sys.stderr, flush=True)
+            if args.non_interactive:
+                return 3
+        try:
+            res = run_agent(name, spec, args.phase, repo_root, client,
+                            repo_root / ".ecc" / "reports")
+        except EccError as exc:
+            print(f"[ecc] agent {name} FAILED: {exc}", file=sys.stderr, flush=True)
+            office_agent_status(name, "blocked", str(exc)[:80])
+            return 1
+        spent += res["cost_usd"]
+        results.append(res)
+
+    print(f"[ecc] Phase {args.phase} complete: {len(results)} agent report(s), "
+          f"est. spend ${spent:.4f}, wall {(time.time() - started):.1f}s", flush=True)
+    office_status({"orchestrator": "done"}, workflow=f"Phase {args.phase} complete")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

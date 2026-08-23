@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""ouroboros-worker — Minimal supervised GPU compute worker for Ouroboros v7.1.
+
+SupervisorD starts this process with auto-restart on crash. It:
+  1. Detects CUDA and logs device capabilities.
+  2. Runs a small warmup matmul to force context/TLB initialization
+     (mirrors the hw-gb10 law's safe-warmup mandate).
+  3. Emits a heartbeat line every WORKER_INTERVAL seconds (default 30).
+  4. Exits cleanly (0) on SIGTERM/SIGINT so SupervisorD stops are orderly.
+
+Never exits non-zero on missing CUDA — it degrades to CPU heartbeat mode so
+the supervisor does not crash-loop on GPU-less machines.
+"""
+
+from __future__ import annotations
+
+import os
+import signal
+import sys
+import time
+from datetime import datetime, timezone
+
+INTERVAL_S = float(os.environ.get("WORKER_INTERVAL", "30"))
+_stop = False
+
+
+def _handle_signal(signum, _frame) -> None:  # noqa: ANN001
+    global _stop
+    print(f"[worker] received signal {signum} — shutting down cleanly", flush=True)
+    _stop = True
+
+
+def log(msg: str) -> None:
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    print(f"[worker] {ts} {msg}", flush=True)
+
+
+def warmup() -> str:
+    """Return a device description; runs a tiny matmul when CUDA is present."""
+    try:
+        import torch
+    except ImportError:
+        return "torch unavailable — CPU heartbeat mode"
+
+    if not torch.cuda.is_available():
+        return "CUDA unavailable — CPU heartbeat mode"
+
+    device = torch.device("cuda")
+    name = torch.cuda.get_device_name(device)
+    major, minor = torch.cuda.get_device_capability(device)
+    log(f"CUDA device: {name} (sm_{major}{minor}, torch {torch.__version__})")
+
+    try:
+        # Safe AOT warmup pass — dummy tensor op before any real graph capture
+        # (hw-gb10 law: forces TLB page mapping / context init).
+        a = torch.randn(1024, 1024, device=device)
+        b = torch.randn(1024, 1024, device=device)
+        torch.cuda.synchronize()
+        _ = (a @ b).sum().item()
+        torch.cuda.synchronize()
+        log("GPU warmup matmul OK")
+    except Exception as exc:  # noqa: BLE001 — worker must stay alive
+        log(f"WARNING: GPU warmup failed ({exc}) — continuing in heartbeat mode")
+    return name
+
+
+def main() -> int:
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, _handle_signal)
+
+    log(f"ouroboros-worker starting (pid={os.getpid()}, interval={INTERVAL_S}s)")
+    device = warmup()
+    beat = 0
+    while not _stop:
+        log(f"heartbeat #{beat} | device={device}")
+        beat += 1
+        # Sleep in small slices so signals interrupt promptly.
+        slept = 0.0
+        while slept < INTERVAL_S and not _stop:
+            time.sleep(min(0.5, INTERVAL_S - slept))
+            slept += 0.5
+    log("worker stopped")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,50 @@
+[
+  {
+    "id": "math-rope",
+    "content": "CONSTRAINT: 2D AST-Relative RoPE (rotating embedding channels independently by AST depth and local sibling index) is mathematically invalid because AST topological coordinates (d, l) do not form an orthogonal metric space. Mandate: Standard 1D RoPE must be used to encode continuous lexical sequence order, combined with an Additive AST Graph Bias (shortest-path distance scalar bias b_phi(i,j) injected directly into pre-softmax attention logits).",
+    "confidence": 0.99,
+    "tags": [
+      "ouroboros-core",
+      "math",
+      "rope",
+      "ast",
+      "attention"
+    ]
+  },
+  {
+    "id": "sys-blocks",
+    "content": "CONSTRAINT: Dynamic PyTorch tensor reshapes mid-generation trigger catastrophic O(N) memory reallocations, destroying cache coherency, heavily fragmenting VRAM, and shattering static CUDA graphs. Mandate: Dynamic sequence expansion must use Block-Level Chunking into fixed 64-token physical blocks managed via a C++ array-backed linked list (block table) and custom fused Triton pointer-chasing attention kernels utilizing make_block_ptr.",
+    "confidence": 0.99,
+    "tags": [
+      "ouroboros-triton",
+      "memory",
+      "vram",
+      "cuda-graphs",
+      "triton"
+    ]
+  },
+  {
+    "id": "hw-gb10",
+    "content": "HARDWARE TRAP: On NVIDIA Grace Blackwell sm_121a platforms with 128GB LPDDR5x unified memory, CUDA graph capture fails with cudaErrorIllegalAddress due to Address Translation Services (ATS) demand-paging unmapped pages before Translation Lookaside Buffer (TLB) initialization. Mandate: Isolate CUDA Graph registry in C++ and wrap initial AOT warmup pass in a try-catch block executing a dummy tensor pass to force safe TLB page mapping.",
+    "confidence": 0.95,
+    "tags": [
+      "ouroboros-triton",
+      "hardware",
+      "blackwell",
+      "sm_121a",
+      "cuda-graphs"
+    ]
+  },
+  {
+    "id": "egraph-limits",
+    "content": "MANDATORY RULE: Equality saturation via egg::Runner must enforce strict resource bounds to prevent exponential RAM exhaustion and undecidability bottlenecks (Rice's Theorem). Mandate: Hardcode IterationLimit(5000), TimeLimit(Duration::from_secs(10)), NodeLimit(1_000_000), and BackoffScheduler(match_limit=5000, ban_length=3). Equality saturation must run strictly as an asynchronous background CPU task, never synchronously blocking the GPU inference or training loop.",
+    "confidence": 0.99,
+    "tags": [
+      "ouroboros-dfg",
+      "rust",
+      "egg",
+      "verification",
+      "equality-saturation"
+    ]
+  }
+]
