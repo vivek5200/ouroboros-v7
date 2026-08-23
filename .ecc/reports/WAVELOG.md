@@ -102,3 +102,9 @@ Hardware-deferred (documented, not faked): Grace Blackwell sm_121a ATS/TLB warmu
   orchestrator run, fresh seed); agent-reported ×2.8 across 5 policy seeds
 - triton: `scripts/demo_serving.py` — 6 Module-6 HA invariants; 121/10skip
 - Suites: core 163 · triton 121+10skip · dfg 75 — all green
+- W8 FINAL (163/163): curriculum corruption redesigned to single-token holes
+  (locally-detectable n-gram anomalies — whole-statement gaps proven
+  information-theoretically ambiguous for trigram features); learning proof
+  recast as robust paired-lift (>0.01 absolute on same held-out set);
+  SCAFFOLD CEILING documented: trigram-mean readout saturates ~0.15-0.16;
+  next architecture step = attention-based placement head (DEFERRED.md)

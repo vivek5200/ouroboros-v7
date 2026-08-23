@@ -58,3 +58,14 @@ locally, and what exists instead. Nothing here is silently faked.
   passwordless sudo to install it. g++ 13 present; pybind11 installed.
 - **Unblocks with**: `sudo apt install python3.12-dev` → `bash src/cpp/build.sh`
   → parity suite activates automatically.
+
+## 6. Stage-1 placement-head capacity ceiling (added Wave 8 final)
+
+- With trigram-context mean-subtracted logits, gap-localization accuracy
+  saturates at ~0.15-0.16 regardless of training signal quality — the
+  readout cannot distinguish among statement-boundary-shaped candidate sites.
+- Learning vs fresh init is real and verified (+0.03..+0.10 absolute lift),
+  but doubling-chance aspirations need an **attention-based placement head**
+  over candidate sites (cross-site contrast) instead of the shared trigram
+  readout. Scaffold + dataset + trainer are done and reusable; this is an
+  architecture upgrade, not a bug.
