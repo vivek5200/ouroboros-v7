@@ -93,3 +93,12 @@ Hardware-deferred (documented, not faked): Grace Blackwell sm_121a ATS/TLB warmu
 - Kernel-vs-golden-reference agreement confirmed on real hardware after three
   remote-debugged fixes: _as_int32 name arg, rope broadcast axis, -1e30 NaN-poison
 - DEFERRED.md item #2 (Triton kernel execution) → RESOLVED
+- triton (W8): `scripts/demo_serving.py` + 5 invariant tests — 12-request session w/ mid-stream crash: served-exactly-once, blast-radius-1, zero leaks, FIFO drain; 121 passed/10 skipped
+
+## WAVE 8 COMPLETE — first real learning run ✅
+- core: `curriculum_data.py` (AST-derived gap ground truth) + `train_loop.py`
+  (masked gap-only REINFORCE via coupled rewards, checkpointing)
+- LEARNING PROVEN: held-out EXPAND@gap accuracy 0.107 → 0.209 (**2.0×**, independent
+  orchestrator run, fresh seed); agent-reported ×2.8 across 5 policy seeds
+- triton: `scripts/demo_serving.py` — 6 Module-6 HA invariants; 121/10skip
+- Suites: core 163 · triton 121+10skip · dfg 75 — all green
