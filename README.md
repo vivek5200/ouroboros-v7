@@ -177,6 +177,27 @@ The orchestrator pauses and requests confirmation if the budget is exceeded.
 | egg | 0.9.5 |
 | clang/llvm | 18 |
 
+## Module Status (post Wave 8)
+
+Compact map of the paper's modules to implementation status. Living ledgers:
+[`WAVELOG.md`](.ecc/reports/WAVELOG.md) (wave-by-wave verified landings) and
+[`DEFERRED.md`](.ecc/reports/DEFERRED.md) (honest hardware/env-bound deferrals
+— nothing silently faked).
+
+| Module | Paper § | Repo | Status | Tests |
+|---|---|---|---|---|
+| M1 Tokenizer/Phantom Padding | §3 | core | COMPLETE (tokenize+AST attribution+SPD+Algorithm-1 loop) | core suite |
+| M1 RL GRPO scaffold | §3.3 | core | SCAFFOLD+PROVEN LEARNING (×2 lift; placement-head upgrade in flight) | core suite |
+| M2 Block memory + chains | §4.2 | triton | COMPLETE (slot-identity, chains) | triton suite |
+| M2 Triton kernel | §4.3–4.4 | triton | AUTHORED + GPU-VERIFIED vs golden reference | T4 run 120/6skip |
+| M2 C++ parity | §4.2 | triton | scaffold; execution deferred (needs Python.h) | DEFERRED.md |
+| M3 RoPE + AST bias | §5 | core | COMPLETE (verified under torch) | core suite |
+| M4 Block-sparse scoping | §6 | core+triton | COMPLETE + cross-repo aligned | both suites |
+| M5 SSA IR + egg engine | §7 | dfg | COMPLETE (limits, rules, async, telemetry) | dfg suite |
+| M5 Python frontend | §7 | dfg | COMPLETE (assign/arith subset) | dfg suite |
+| M6 Supervisor-Worker HA | §8 | triton+v7 | COMPLETE semantics + demo invariants | triton suite |
+| GB10 warmup path | §4.5 | — | DEFERRED (hardware-bound) | DEFERRED.md |
+
 ## Reference
 
 See the [Ouroboros v7.1 Specification](https://ouroboros.dev/spec/v7.1) for the complete system design.
