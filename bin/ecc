@@ -316,7 +316,7 @@ def _load_pyo3_engine():
             "--features pyo3-ext && python3 -m pip install --user "
             "--break-system-packages target/wheels/*.whl`"
         ) from exc
-    return ouroboros_dfg.PyEggEngine()
+    return ouroboros_dfg
 
 
 def _verify_one(engine, before_path: str, after_path: str,
@@ -368,14 +368,29 @@ def cmd_verify_manifest(args) -> int:
     if not isinstance(entries, list):
         raise EccError("manifest must be a JSON array of {job_id, before, after}")
 
-    engine = _load_pyo3_engine()
+    mod = _load_pyo3_engine()
+    dsl_engine = mod.PyEggEngine()
     greens = yellows = 0
     for i, entry in enumerate(entries):
-        data = _verify_one(engine, entry["before"], entry["after"],
-                           int(entry.get("job_id", i)), args.config)
+        kind = entry.get("kind", "dsl")
+        job_id = int(entry.get("job_id", i))
+        t0 = time.time()
+        if kind == "source":
+            raw = mod.prove_refactor(entry["before"], entry["after"])
+            verdict = raw.get("verdict", "unproven")
+            data = {"job_id": job_id, "kind": "source",
+                    "verdict": verdict,
+                    "verdict_kind": "green" if verdict == "equivalent" else "yellow",
+                    "iterations": raw.get("iterations") or 0,
+                    "nodes": raw.get("nodes") or 0,
+                    "timestamp": datetime.now(timezone.utc).isoformat()}
+            print(json.dumps(data))
+        else:
+            data = _verify_one(dsl_engine, entry["before"], entry["after"],
+                               job_id, args.config)
         if data["verdict_kind"] == "green":
             greens += 1
-        else:
+        elif data["verdict_kind"] != "skip":
             yellows += 1
 
     total = greens + yellows
