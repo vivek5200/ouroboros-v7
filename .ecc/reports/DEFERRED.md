@@ -19,10 +19,10 @@ locally, and what exists instead. Nothing here is silently faked.
 
 - Kernel source authored law-compliantly (`make_block_ptr`, additive AST bias,
   scoping mask fused in-SRAM) with correctness harness.
-- **Cannot execute locally**: no triton/torch installed at authoring time; RTX 3050
-  4 GB constrains sizes even when installed.
-- **Exists instead**: `pytest.importorskip("triton")` harness + dense-reference
-  comparison test that activates automatically wherever triton+GPU exist.
+- **RESOLVED (Colab T4)**: kernel executed and matched golden reference —
+  full triton suite 120 passed / 6 skipped (C++ parity) / 0 failed.
+  Three remote-debugged fixes landed post-hardware-run: `_as_int32` name arg,
+  rope broadcast axis in `dense_reference`, finite `-1e30` masking (NaN poison).
 
 ## 3. AOT CUDA Graph static dispatch loop (paper §4.4)
 

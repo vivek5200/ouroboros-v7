@@ -87,3 +87,9 @@ Hardware-deferred (documented, not faked): Grace Blackwell sm_121a ATS/TLB warmu
 - triton: `scoping_mask.py` Table-1 port bit-for-bit aligned to core + 2 e2e masked golden-attention tests; 116 passed/10 skipped
 - dfg: `frontend_python.rs` — tree-sitter Python lowering (assign/arith/unary subset) into SSA; 75/75 (13 new); deps tree-sitter 0.25.10 + grammar 0.23.6
 - WAVE 7 COMPLETE: 143 · 116+10skip · 75 all green
+
+## GPU VERIFICATION MILESTONE (Lightning-free path: Colab T4 + bore tunnel + git loop)
+- Full triton suite on T4: **120 passed / 6 skipped (C++ parity only) / 0 failed**
+- Kernel-vs-golden-reference agreement confirmed on real hardware after three
+  remote-debugged fixes: _as_int32 name arg, rope broadcast axis, -1e30 NaN-poison
+- DEFERRED.md item #2 (Triton kernel execution) → RESOLVED
