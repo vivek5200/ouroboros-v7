@@ -146,3 +146,23 @@ Hardware-deferred (documented, not faked): Grace Blackwell sm_121a ATS/TLB warmu
   143 passed/12 skipped (19 new)
 - dfg: frontend v2 — augmented +=/-=/*= desugared to SSA rebinding,
   self-serve subset errors; 94/94 cargo
+
+## WAVE 12 COMPLETE — consolidation ✅
+- core: `scaling_study.py` harness (StudyConfig/run_config/scaling_study/render_table)
+  + CPU-reproduced width finding: lift shrinks with d_model at fixed schedule
+  (0.602/0.301/0.091 for d16/32/64) → schedule must scale with width; 208/208
+- triton: `t4_full_suite.sh` + `wave12_t4_battery.py` — one-command GPU battery
+  (env report, full suites, perm-study, head sweep); local OVERALL PASS rc=0
+- dfg: `lower_python` via PyO3 (SSA text introspection from Python); 95/95 cargo
+- Master Colab cell delivered: clone ×4 → t4_full_suite.sh
+
+## 🏆 T4 SCALING SWEEP — first real learning-at-scale results (Colab T4)
+Full battery OVERALL PASS. Placement-head sweep (held-out EXPAND@gap):
+  d16 · 6ep · 128inst : fresh 0.078 → post 0.6801  (lift +0.602)  ← BEST
+  d24 · 8ep · 192inst : fresh 0.091 → post 0.3380  (lift +0.247)
+  d32 ·10ep · 256inst : fresh 0.111 → post 0.5005  (lift +0.389)
+Finding: narrower placement heads learn FASTER and reach HIGHER held-out
+accuracy at matched schedules — capacity is not the bottleneck at stage-1;
+signal-to-parameter ratio is. Phase 2-A should train the diffusion model's
+placement decisions through a NARROW head (d≤16) before widening.
+Section B on T4: 149 passed / 6 skipped / 0 failed (kernel legs live).
