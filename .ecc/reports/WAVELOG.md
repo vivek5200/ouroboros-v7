@@ -108,3 +108,41 @@ Hardware-deferred (documented, not faked): Grace Blackwell sm_121a ATS/TLB warmu
   recast as robust paired-lift (>0.01 absolute on same held-out set);
   SCAFFOLD CEILING documented: trigram-mean readout saturates ~0.15-0.16;
   next architecture step = attention-based placement head (DEFERRED.md)
+- dfg (W9): `e2e_proof.rs` — first source-level refactor proofs (assoc/commute/identity Equivalent, control Unproven); 86/86 cargo. TWO real bugs fixed: param-naming collision (raw Value ids → param_ordinal) and missing commute-mul rule.
+
+## WAVE 9 COMPLETE — architecture ceiling BROKEN ✅
+- core: `PlacementHead` (site-contrast MultiheadAttention over splice sites)
+  — held-out lift **+0.156 on independent seeds** (fresh 0.039→post 0.195),
+  vs old trigram-readout ceiling of ~+0.05 TOTAL; 172/172 all green;
+  legacy bit-for-bit preserved via strategy flag
+- dfg: `e2e_proof.rs` — source-level refactor proofs through the FULL chain
+  (frontend→SSA→egg→verdict): assoc/commute/identity Equivalent,
+  control honestly Unproven; TWO real bugs fixed en route:
+  param-naming collision + missing commute-mul rule; 86/86 cargo
+- v7: README module-status matrix, docs/CAMPAIGN.md, pre-wave-9 tags ×4 repos
+- core (W10): PhantomLoop ← PlacementHead integration (learned site selection, save_all/load_all incl. head); 178/178, orchestrator loop-probe clean
+
+## WAVE 10 COMPLETE — integration wave ✅
+- core: PhantomLoop ← learned PlacementHead (site selection from training);
+  save_all/load_all round-trips both state dicts; 178/178
+- triton: RoPE channel-permutation gap CLOSED — perm proven out-shuffle
+  (involution only at d∈{2,4}; order 3 at d=8 → explicit inverse required);
+  d=8 un-permuted 8.3e-2 FAIL vs permuted 6e-8 PASS; GPU-gated d8/d32 tests;
+  124 passed/12 skipped local
+- dfg: `prove_refactor(before_src, after_src)` exposed via PyO3 — Python
+  calls source-level proofs directly; 86/86
+- v7: `ecc verify-manifest` speaks both dialects (source pairs via PyO3 +
+  DSL file pairs via egg engine) — mixed manifest 2G/0Y exit 0
+
+## Wave 11 landings so far (verified)
+- core: `auto_scope_spans` + `block_sparse_mask_for_source` — Module 4 tags derived from real source via stdlib ast; 200/200 (22 new), end-to-end spot-checks PASS
+- dfg: frontend v2 — augmented +=/-=/*= with SSA rebinding, self-serve subset errors; 94/94 cargo
+
+## WAVE 11 COMPLETE — simplification-closers ✅
+- core: auto scope tags from real source (ast attribution → Table-1 masks);
+  200/200 (22 new), end-to-end spot-checks PASS
+- triton: multi-token golden oracle `golden_attention_mt` — chain-wide softmax,
+  partial tails, absolute-position RoPE, bit-parity with legacy + dense ≤1e-9;
+  143 passed/12 skipped (19 new)
+- dfg: frontend v2 — augmented +=/-=/*= desugared to SSA rebinding,
+  self-serve subset errors; 94/94 cargo

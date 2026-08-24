@@ -3,3 +3,4 @@
 {"job_id": 2, "before": "/tmp/vpairs/alg.sexpr.before", "after": "/tmp/vpairs/alg.sexpr.after", "verdict": "equivalent", "verdict_kind": "green", "iterations": 4, "nodes": 16, "elapsed_ms": 0, "timestamp": "2026-08-23T08:41:58.470807+00:00"}
 {"job_id": 1, "before": "/tmp/vpairs/dm.sexpr.before", "after": "/tmp/vpairs/dm.sexpr.after", "verdict": "equivalent", "verdict_kind": "green", "iterations": 2, "nodes": 7, "elapsed_ms": 0, "timestamp": "2026-08-23T08:42:29.005737+00:00"}
 {"job_id": 2, "before": "/tmp/vpairs/alg.sexpr.before", "after": "/tmp/vpairs/alg.sexpr.after", "verdict": "equivalent", "verdict_kind": "green", "iterations": 4, "nodes": 16, "elapsed_ms": 0, "timestamp": "2026-08-23T08:42:29.006068+00:00"}
+{"job_id": 2, "before": "/tmp/vpairs/dm.sexpr.before", "after": "/tmp/vpairs/dm.sexpr.after", "verdict": "equivalent", "verdict_kind": "green", "iterations": 2, "nodes": 7, "elapsed_ms": 0, "timestamp": "2026-08-23T13:10:48.944375+00:00"}
