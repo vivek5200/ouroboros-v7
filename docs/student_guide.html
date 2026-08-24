@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ouroboros v7.1 — A Student's Guide</title>
+<style>
+  @page { size: A4; margin: 16mm 14mm;
+    @bottom-center { content: "Ouroboros v7.1 Student Guide — page " counter(page) " of " counter(pages); font-size: 8pt; color:#666; font-family: Georgia, serif; } }
+  body { font-family: Georgia, serif; font-size: 10pt; line-height: 1.5; color: #16211c; }
+  h1 { font-size: 21pt; color: #14532d; border-bottom: 3px solid #14532d; padding-bottom: 6px; }
+  h2 { font-size: 14.5pt; color: #14532d; margin-top: 22px; border-bottom: 1px solid #b9d4bd; padding-bottom: 3px; page-break-after: avoid; }
+  h3 { font-size: 11.5pt; color: #1f6f43; margin-top: 13px; page-break-after: avoid; }
+  .concept { background:#eef7ef; border:1px solid #bcd9c2; border-radius:6px; padding:8px 12px; margin:10px 0; page-break-inside: avoid; }
+  .concept b:first-child { color:#14532d; }
+  .analogy { background:#fdf6e3; border:1px dashed #c9b458; border-radius:6px; padding:7px 11px; margin:8px 0; font-style: italic; page-break-inside: avoid; }
+  .law { background:#fdeeee; border:1px solid #e0b4b4; border-radius:6px; padding:7px 11px; margin:8px 0; page-break-inside: avoid; }
+  table { border-collapse: collapse; width:100%; margin:9px 0; font-size:9pt; }
+  th { background:#14532d; color:#fff; text-align:left; padding:4px 7px; }
+  td { border:1px solid #c4d8c8; padding:4px 7px; vertical-align:top; }
+  tr:nth-child(even) td { background:#f3f8f4; }
+  code { font-family:'Courier New',monospace; font-size:8.5pt; background:#edf3ee; padding:1px 3px; }
+  pre { background:#f2f6f2; border-left:3px solid #14532d; padding:7px; font-size:8pt; white-space:pre-wrap; }
+  .svgbox { margin: 10px 0 14px 0; page-break-inside: avoid; }
+  .svgbox .cap { font-size:8.5pt; color:#555; text-align:center; margin-top:2px; font-style:italic; }
+  svg text { font-family: Helvetica, Arial, sans-serif; }
+  ul li { margin-bottom:3px; }
+  .phase { border:1px solid #b9d4bd; border-radius:8px; padding:10px 14px; margin:12px 0; page-break-inside: avoid; background:#fbfefb;}
+  .phase h3 { margin-top: 2px; }
+  .pagebreak { page-break-before: always; }
+</style>
+</head>
+<body>
+
+<h1>Ouroboros v7.1 — A Student's Guide</h1>
+<p><i>What we are building, every concept explained from scratch, how the pieces fit, what we achieved, and the complete roadmap of future phases.</i></p>
+
+<div class="concept"><b>Who this is for:</b> a computer-science student who knows data structures, basic OS concepts (virtual memory, processes) and a little Python — but maybe not machine learning, GPUs or formal verification. Every specialised term is explained when it first appears, and again in the glossary (§9).</div>
+
+<h2>1 · The story in one page</h2>
+<p><b>The problem.</b> Today's AI coding assistants write code one token at a time, left to right. That is fine for autocomplete, but useless for <i>refactoring</i> — restructuring existing programs (renaming, extracting methods, splitting classes). Editing anything forces the model to regenerate everything after the edit point, and its left-to-right bias means it never plans globally.</p>
+<p><b>The idea.</b> Borrow <b>diffusion models</b> (the technique behind image generators): start with a corrupted/blanked program and iteratively denoise it toward a corrected version — editing <i>anywhere, in any order</i>. Add two magic control tokens: <code>[EXPAND]</code> (“make room here”) and <code>[DELETE]</code> (“remove this”).</p>
+<p><b>The wall.</b> Real programs grow and shrink while they are being generated. On a GPU, changing a tensor's size mid-computation is catastrophic: it forces reallocation of all memory, destroys caches, and breaks CUDA Graphs (pre-recorded GPU command sequences that make inference fast).</p>
+<p><b>Our answer — Ouroboros v7.1:</b> seven cooperating modules that give diffusion models room to grow on real hardware, prove their edits correct with mathematical tooling, survive kernel crashes, and learn where to expand — all governed by four inviolable architectural laws enforced by AI agents during development.</p>
+
+<svg class="svgbox" viewBox="0 0 720 210" width="100%">
+  <defs><marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#333"/></marker></defs>
+  <rect x="10" y="30" width="330" height="150" rx="8" fill="#fdecea" stroke="#c0392b"/>
+  <text x="175" y="52" text-anchor="middle" font-size="14" font-weight="bold" fill="#c0392b">TODAY: Autoregressive (AR)</text>
+  <text x="40" y="85" font-size="12">writes t₁ → t₂ → t₃ → … strictly left-to-right</text>
+  <line x1="45" y1="100" x2="300" y2="100" stroke="#c0392b" marker-end="url(#arr)"/>
+  <text x="40" y="125" font-size="11">edit at position i ⇒ regenerate i…N</text>
+  <text x="40" y="145" font-size="11" fill="#c0392b">cost grows with file size ✗</text>
+  <text x="40" y="165" font-size="11" fill="#c0392b">cannot plan global restructures ✗</text>
+
+  <rect x="380" y="30" width="330" height="150" rx="8" fill="#eaf7ee" stroke="#1e8449"/>
+  <text x="545" y="52" text-anchor="middle" font-size="14" font-weight="bold" fill="#1e8449">OUROBOROS: Masked Diffusion</text>
+  <g font-size="12">
+    <rect x="400" y="80" width="46" height="26" fill="#fff" stroke="#1e8449"/><text x="423" y="97" text-anchor="middle">de f</text>
+    <rect x="450" y="80" width="46" height="26" fill="#fff8e1" stroke="#b7950b"/><text x="473" y="97" text-anchor="middle">█</text>
+    <rect x="500" y="80" width="46" height="26" fill="#fff8e1" stroke="#b7950b"/><text x="523" y="97" text-anchor="middle">█</text>
+    <rect x="550" y="80" width="46" height="26" fill="#fff" stroke="#1e8449"/><text x="573" y="97" text-anchor="middle">( x )</text>
+    <rect x="600" y="80" width="60" height="26" fill="#fff" stroke="#1e8449"/><text x="630" y="97" text-anchor="middle">return</text>
+  </g>
+  <path d="M430 118 C 480 140, 600 140, 650 115" stroke="#1e8449" fill="none" marker-end="url(#arr)"/>
+  <text x="545" y="132" text-anchor="middle" font-size="11">model un-masks tokens iteratively — anywhere, any order ✓</text>
+  <text x="400" y="160" font-size="11" fill="#1e8449">[EXPAND]/[DELETE] reshape the program structurally ✓</text>
+</svg>
+<div class="svgbox cap">Figure 1 — Why we switched paradigms: parallel any-order refinement vs sequential regeneration.</div>
+
+<h2>2 · Background concepts (everything you need)</h2>
+
+<h3>2.1 Tokens &amp; tokenisation</h3>
+<div class="concept"><b>Token:</b> a chunk of text the model reads/writes — a word piece, symbol or keyword. <code>"x = a + 1"</code> might become tokens <code>[x, =, a, +, 1]</code>. Models never see characters; they see integer IDs looked up in a vocabulary table (<code>Vocab</code> maps <code>"x"</code> → 7 etc.). Our tokenizer assigns consecutive IDs starting at 1 (0 is reserved as padding).</div>
+
+<h3>2.2 Abstract Syntax Trees (AST)</h3>
+<div class="concept"><b>AST:</b> the parser's tree view of a program. <code>x = a + 1</code> becomes an Assign node whose children are a Name (<code>x</code>) and a BinaryOp (<code>a + 1</code>). Python's built-in <code>ast</code> module gives us this for free. The tree encodes <i>structure</i>: which expression lives inside which function, who is the parent of whom.</div>
+<p>We use the AST twice: (a) to attribute each token to its smallest containing node, and (b) to compute the <b>shortest-path-distance matrix φ(i,j)</b> between all token pairs by BFS over the undirected parent↔child edges. Two tokens that sit in the same tiny expression have small φ even if they are far apart in the raw text — exactly the “these belong together” signal attention needs.</p>
+
+<h3>2.3 Attention, softmax and positional encodings</h3>
+<div class="concept"><b>Self-attention:</b> every position builds a <i>query</i> q and a <i>key</i> k from its embedding; the score between positions i and j is ⟨qᵢ,kⱼ⟩/√d. A <b>softmax</b> turns scores into weights summing to 1, and the output is the weighted average of <i>value</i> vectors vⱼ. So attention literally asks “who should I look at?”.</div>
+<div class="concept"><b>RoPE (Rotary Position Embedding):</b> a clever way to inject <i>position</i> into attention: rotate query/key vector pairs by an angle proportional to position. The dot product then depends only on the <i>relative offset</i> m−n between tokens (Eq. 3 of the paper). We use the standard 1-D version on lexical order — and our law guard makes 2-D experiments structurally impossible (§4, M3).</div>
+
+<h3>2.4 Diffusion models for code</h3>
+<div class="concept"><b>Masked discrete diffusion:</b> take a correct program, progressively replace tokens with <code>[MASK]</code>; train a network to predict originals given the partially-masked view. At inference, start fully masked and un-mask step by step — <b>in any order</b>, because every position is always visible. Ouroboros adds two structural actions: <code>[EXPAND]</code> (insert k fresh masks here — the program needs more room) and <code>[DELETE]</code> (this span is redundant).</div>
+
+<h3>2.5 GPUs, VRAM and CUDA Graphs</h3>
+<div class="analogy">Think of GPU memory (VRAM) as a huge warehouse and CUDA kernels as forklift instructions. A <b>CUDA Graph</b> is a pre-recorded forklift choreography replayed with near-zero CPU overhead — but the choreography assumes shelves never move. Resizing a tensor mid-run = rebuilding half the warehouse while forklifts run: everything stalls and cached routes die.</div>
+<ul>
+<li><b>Why reshapes hurt:</b> PyTorch must allocate brand-new contiguous storage and copy — O(N), plus the old layout's cache locality is lost.</li>
+<li><b>Why static shapes matter:</b> CUDA Graph capture records exact pointer addresses; dynamic sizes invalidate the recording.</li>
+<li><b>Triton:</b> a language for writing GPU kernels where you program tiles of work; <code>make_block_ptr</code> lets a kernel treat scattered memory blocks like tidy tiles (paper §4.3).</li>
+<li><b>HBM vs SRAM:</b> big-but-slow GPU memory vs tiny-but-fast on-chip memory. Fused kernels load once into SRAM and do RoPE + bias + masking <i>inside</i> before writing back.</li>
+</ul>
+
+<h3>2.6 Virtual memory &amp; paging → block tables</h3>
+<div class="concept"><b>Paging (from OS class):</b> processes see contiguous virtual addresses; the OS maps pages to scattered physical frames via a page table. vLLM applied this to KV-caches. Ouroboros applies it to the <i>sequence itself</i>: 64-token physical blocks, chained through an array-backed linked list called the <b>block table</b>. Growth = allocate one block, update one pointer. No resizes, ever.</div>
+
+<h3>2.7 e-graphs &amp; Rice's theorem</h3>
+<div class="concept"><b>e-graph:</b> a data structure that compactly stores <i>many equivalent versions</i> of a program at once, grouping equal expressions into e-classes. <b>Equality saturation:</b> apply rewrite rules (a+b ⇔ b+a, De Morgan…) exhaustively until equivalent forms meet in one e-class — proving equality without choosing an order. <b>Rice's theorem:</b> any non-trivial semantic property of programs is undecidable — so saturation may never terminate. Answer: hard resource caps + asynchronous execution + honest “yellow” results.</div>
+
+<h3>2.8 RL, GRPO and antithetic variates</h3>
+<div class="concept"><b>REINFORCE:</b> sample actions from the policy, weight each sampled action's log-probability by the reward, ascend. <b>GRPO:</b> compare rewards within a group to form advantages (no value network needed). <b>Antithetic variates:</b> evaluate pairs of complementary configurations (here: perfectly complementary masks m¹∪m²=1, m¹∩m²=∅) so randomness cancels — variance drops. Our advantage is r¹−r² per couple.</div>
+
+<h3>2.9 SSA form, PyO3 &amp; maturin</h3>
+<div class="concept"><b>SSA (Static Single Assignment):</b> every variable is assigned exactly once (x₁, x₂, …). Makes data-flow explicit and analysis easy. <b>PyO3:</b> Rust↔Python bindings; <b>maturin</b> builds a Rust crate into a pip-installable wheel. Our verifier core is Rust (fast, safe); Python calls it through this bridge.</div>
+
+<div class="pagebreak"></div>
+<h2>3 · The seven modules — problem → idea → proof</h2>
+<p style="font-size:9.5pt;color:#555;">Each module below follows the same pattern: the obstacle, the mechanism, and the test that pins it. Test counts come from the verified suites (§5).</p>
+
+<h3>M1 · Tokenizer, Phantom Padding &amp; the Algorithm-1 loop <span style="font-size:9pt;color:#777;">(ouroboros-core — 143 tests)</span></h3>
+<p><b>Obstacle:</b> sequences must grow/shrink while the physical buffer stays exactly L_MAX=1024 tokens.</p>
+<p><b>Mechanism:</b> front-pack tokens, track a <i>logical length</i>, and implement growth/shrinkage as in-place operations: <code>insert_masks(pos, k)</code> converts tail capacity into fresh masks at the splice point; <code>logical_delete(pos)</code> pops and refills with <code>[IGNORE]</code>; <code>derive_mask()</code> yields the attention mask. The Algorithm-1 loop then runs: policy inspects the buffer, picks KEEP/EXPAND/DELETE per masked slot, and the shape never changes.</p>
+<p>We also completed the AST-aware tokenizer itself (<code>tokenize_with_nodes</code>, shared <code>Vocab</code>) and the φ-matrix helper — 18 tests.</p>
+<svg class="svgbox" viewBox="0 0 720 240" width="100%">
+  <defs><marker id="arr2" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#1e8449"/></marker></defs>
+  <rect x="20" y="20" width="680" height="200" rx="8" fill="#f6fbf6" stroke="#bcd9c2"/>
+  <text x="360" y="42" text-anchor="middle" font-size="13" font-weight="bold" fill="#14532d">ALGORITHM 1 — Phantom Padding loop (shape NEVER changes)</text>
+  <g font-size="11">
+    <rect x="45" y="60" width="90" height="24" fill="#fff" stroke="#14532d"/><text x="90" y="76" text-anchor="middle">front_pack</text>
+    <rect x="170" y="60" width="110" height="24" fill="#fff" stroke="#14532d"/><text x="225" y="76" text-anchor="middle">policy sees buffer</text>
+    <rect x="315" y="60" width="120" height="24" fill="#fff" stroke="#14532d"/><text x="375" y="76" text-anchor="middle">pick action / site</text>
+  </g>
+  <line x1="135" y1="72" x2="168" y2="72" stroke="#1e8449" marker-end="url(#arr2)"/>
+  <line x1="280" y1="72" x2="313" y2="72" stroke="#1e8449" marker-end="url(#arr2)"/>
+  <g font-size="11">
+    <rect x="70" y="120" width="150" height="34" rx="6" fill="#fff8e1" stroke="#b7950b"/><text x="145" y="134" text-anchor="middle">[EXPAND] @ gap</text><text x="145" y="148" text-anchor="middle">insert_masks(+1)</text>
+    <rect x="290" y="120" width="150" height="34" rx="6" fill="#fff8e1" stroke="#b7950b"/><text x="365" y="134" text-anchor="middle">[DELETE]</text><text x="365" y="148" text-anchor="middle">logical_delete</text>
+    <rect x="510" y="120" width="150" height="34" rx="6" fill="#fff8e1" stroke="#b7950b"/><text x="585" y="134" text-anchor="middle">KEEP / fill token</text><text x="585" y="148" text-anchor="middle">logprob update</text>
+  </g>
+  <line x1="375" y1="84" x2="145" y2="118" stroke="#888" stroke-dasharray="4" marker-end="url(#arr2)"/>
+  <line x1="375" y1="84" x2="365" y2="118" stroke="#888" stroke-dasharray="4"/>
+  <line x1="375" y1="84" x2="585" y2="118" stroke="#888" stroke-dasharray="4" marker-end="url(#arr2)"/>
+  <rect x="150" y="180" width="420" height="28" rx="14" fill="#14532d"/><text x="360" y="199" text-anchor="middle" font-size="12" fill="#fff">LAW: len(buffer) == 1024 after EVERY operation (tested each step)</text>
+</svg>
+<div class="svgbox cap">Figure 2 — The loop that never resizes: growth is bookkeeping, not memory movement.</div>
+
+<h3>M1-RL · Coupled-GRPO training <span style="font-size:9pt;color:#777;">(143 → 163 tests)</span></h3>
+<p><b>Obstacle:</b> RL needs reward signal; real verification is undecidable and slow.</p>
+<p><b>Mechanism:</b> antithetic mask pairs (complementary by construction), rewards from the Fuzzy Proxy formula, advantages r¹−r², and a loss that touches <i>only</i> the gap position's log-probability. Our Wave-8 learning proof: held-out EXPAND-at-gap accuracy went from 0.107 → 0.209 (2.0×, independently reproduced); later, swapping in the attention placement head pushed absolute accuracy to 0.40 (≈5× fresh init) — breaking the scaffold ceiling documented in DEFERRED.md §6.</p>
+
+<h3>M3 · Attention math <span style="font-size:9pt;color:#777;">(core — inside the 163-test suite)</span></h3>
+<p><b>Obstacle:</b> injecting AST topology without breaking hardware-friendly attention.</p>
+<p><b>Mechanism:</b> scores become Softmax(QK/√d <b>+ b_φ(i,j)</b>) with b_φ = log1p(shortest-path distance) — additive, differentiable, no message-passing GNN. A structural guard raises if anyone attempts a 2-D position grid (the banned math-rope violation). Tests include the relative-offset property (score depends only on m−n), exact additivity against manual computation, and scope-mask integration.</p>
+
+<h3>M4 · Block-sparse lexical scoping <span style="font-size:9pt;color:#777;">(core + triton — aligned bit-for-bit)</span></h3>
+<p><b>Obstacle:</b> bidirectional diffusion wants full attention; IDE latency forbids it.</p>
+<p><b>Mechanism:</b> Table-1 hierarchy — LOCAL sees GLOBAL and itself and its own scope; GLOBAL ignores LOCAL (freezing the global KV-cache!); sibling scopes don't bleed. Implemented identically in both repos; 21+ tests including a hand-written 8×8 literal matrix and asymmetry proofs.</p>
+
+<h3>M2 · Block-level memory &amp; chains <span style="font-size:9pt;color:#777;">(triton — 121 tests incl. demo)</span></h3>
+<p><b>Obstacle:</b> growth-by-resize destroys everything (§2.5).</p>
+<p><b>Mechanism:</b> slot-identity BlockTable (id == storage index forever — kills a real desync bug found in the skeleton), all-or-nothing chain allocation, <code>expand_chain</code> as the [EXPAND] primitive, double-free rejection. Differential parity against a C++ twin is scaffolded (skipped until Python.h exists on the host).</p>
+
+<h3>M2-GPU · The Triton kernel <span style="font-size:9pt;color:#777;">(GPU-proven on T4)</span></h3>
+<p><b>Obstacle:</b> attention over SCATTERED blocks needs pointer-chasing plus three fused operations, and Triton's compiler rejects plain <code>continue</code>.</p>
+<p><b>Mechanism:</b> per-block program loads the physical id from the page table, builds <code>make_block_ptr</code> views into the scattered cache, rotates Q/K with RoPE tables, adds bias, applies −1e30 masking (finite negatives instead of −inf — avoids NaN poisoning when a leading tile is fully scoped-out), online softmax, writes through an output block ptr. Verified against the pure-Python golden reference on a real T4: <b>120 passed / 6 skipped / 0 failed</b>. The permutation study proved the reference↔kernel channel mapping is the out-shuffle (involution only at d∈{2,4}; explicit inverse required at d=8 — 6e-8 agreement).</p>
+
+<h3>M5 · SSA → egg → telemetry <span style="font-size:9pt;color:#777;">(dfg — 86/86)</span></h3>
+<p><b>Obstacle:</b> prove refactorings semantically equivalent without hanging or lying.</p>
+<p><b>Mechanism:</b> lower Python subsets to SSA IR → render to egg expressions → saturate under LAW-pinned limits (5000 iterations / 10 s / 1 M nodes / backoff 5000·3) → verdicts are honest: Equivalent (green) or Unproven (yellow) — yellow is a designed outcome feeding the SRE ratio. Runs async; exposed to Python via PyO3: <code>ouroboros_dfg.prove_refactor(src_a, src_b)</code>. Tree-sitter frontend lowers real assignments/arithmetic into the SSA IR.</p>
+
+<h3>M6 · Supervisor–Worker HA <span style="font-size:9pt;color:#777;">(triton — demo with 6 invariant proofs)</span></h3>
+<p><b>Obstacle:</b> custom kernels segfault; a crashed node cannot serve.</p>
+<p><b>Mechanism:</b> the Supervisor solely owns the block table + KV-cache (workers get a single mediated door, <code>table_op</code>); workers are stateless (purity test-enforced), so restart = fresh object; crashes degrade exactly one request into the Safe Queue (FIFO, drained exactly once); a 12-request demo session proves zero block leaks and blast radius = 1.</p>
+
+<div class="pagebreak"></div>
+<h2>4 · The governance layer (M7) — how agents build this safely</h2>
+<p>Everything above was written by AI specialists under five enforced properties:</p>
+<ol>
+<li><b>Law validation before implementation</b> — intents checked against laws.json by the reasoning-model validator (ALLOW/BLOCK recorded).</li>
+<li><b>Test-first discipline</b> — red phases confirmed before green across waves.</li>
+<li><b>Independent orchestrator verification</b> — agent claims accepted only after reproduction (several were rejected and repaired — see Campaign Report §4).</li>
+<li><b>Deferral honesty</b> — impossible-here items documented with unblock steps, never faked.</li>
+<li><b>Institutional memory</b> — WAVELOG/CAMPAIGN ledgers survive session turnover.</li>
+</ol>
+
+<svg class="svgbox" viewBox="0 0 720 260" width="100%">
+  <defs><marker id="arr3" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#14532d"/></marker></defs>
+  <rect x="230" y="14" width="260" height="40" rx="8" fill="#14532d"/>
+  <text x="360" y="39" text-anchor="middle" font-size="13" fill="#fff">ORCHESTRATOR bin/ecc (+ ox-alpha model)</text>
+  <rect x="30" y="84" width="200" height="46" rx="6" fill="#fff" stroke="#14532d"/><text x="130" y="103" text-anchor="middle" font-size="11.5">laws.json validator</text><text x="130" y="119" text-anchor="middle" font-size="10">ALLOW / BLOCK gate</text>
+  <rect x="270" y="84" width="180" height="46" rx="6" fill="#fff" stroke="#14532d"/><text x="360" y="103" text-anchor="middle" font-size="11.5">specialist agents ×3</text><text x="360" y="119" text-anchor="middle" font-size="10">tdd-guide / systems-eng / rust-spec</text>
+  <rect x="490" y="84" width="200" height="46" rx="6" fill="#fff" stroke="#14532d"/><text x="590" y="103" text-anchor="middle" font-size="11.5">office dashboard</text><text x="590" y="119" text-anchor="middle" font-size="10">live agent statuses</text>
+  <rect x="30" y="164" width="200" height="52" rx="6" fill="#eef7ef" stroke="#1e8449"/><text x="130" y="184" text-anchor="middle" font-size="11.5">ouroboros-core</text><text x="130" y="200" text-anchor="middle" font-size="10">M1 · M3 · M4 · RL — 178 tests</text>
+  <rect x="260" y="164" width="200" height="52" rx="6" fill="#eef7ef" stroke="#1e8449"/><text x="360" y="184" text-anchor="middle" font-size="11.5">ouroboros-triton</text><text x="360" y="200" text-anchor="middle" font-size="10">M2 · M6 · kernel — 121 tests</text>
+  <rect x="490" y="164" width="200" height="52" rx="6" fill="#eef7ef" stroke="#1e8449"/><text x="590" y="184" text-anchor="middle" font-size="11.5">ouroboros-dfg</text><text x="590" y="200" text-anchor="middle" font-size="10">M5 verifier — 86 tests</text>
+  <line x1="360" y1="54" x2="130" y2="82" stroke="#14532d" marker-end="url(#arr3)"/>
+  <line x1="360" y1="54" x2="360" y2="82" stroke="#14532d" marker-end="url(#arr3)"/>
+  <line x1="130" y1="130" x2="130" y2="162" stroke="#1e8449" marker-end="url(#arr3)"/>
+  <line x1="360" y1="130" x2="360" y2="162" stroke="#1e8449" marker-end="url(#arr3)"/>
+  <line x1="590" y1="130" x2="590" y2="162" stroke="#1e8449" marker-end="url(#arr3)"/>
+  <line x1="130" y1="216" x2="360" y2="216" stroke="#888" stroke-dasharray="3"/>
+  <text x="245" y="212" text-anchor="middle" font-size="9.5" fill="#666">~339 tests total, all green</text>
+</svg>
+<div class="svgbox cap">Figure 3 — Governance layer: laws gate the swarm; the swarm fills the repos; the office watches.</div>
+
+<div class="pagebreak"></div>
+<h2>5 · What we achieved (verified numbers)</h2>
+<table>
+<tr><th>Claim</th><th>Evidence</th></tr>
+<tr><td>Suites green</td><td>core 178 · triton 121+10skip · dfg 86 — all orchestrator-re-run</td></tr>
+<tr><td>Triton kernel proven on GPU</td><td>T4: 120 passed/6 skipped/0 failed; kernel≡golden after 3 hardware-caught fixes</td></tr>
+<tr><td>RoPE channel semantics pinned</td><td>d=8 study: permuted 6e-8 PASS vs un-permuted 8.3e-2 FAIL</td></tr>
+<tr><td>Policy learns</td><td>held-out lift ×2.0 (orchestrator) / ×2.54–3.38 (5 seeds); attention head +0.156 abs on unseen seeds</td></tr>
+<tr><td>Source-level proofs from Python</td><td><code>prove_refactor("(r=(a+b)+c)", "(r=a+(b+c))") → equivalent</code></td></tr>
+<tr><td>HA invariants</td><td>demo session: served-exactly-once, blast-radius-1, zero leaks</td></tr>
+<tr><td>Laws enforced</td><td>ALLOW×N recorded; BLOCK would stop specialists pre-write</td></tr>
+</table>
+
+<h2>6 · Teaching moments — real bugs we caught (and what they teach)</h2>
+<table>
+<tr><th>Bug</th><th>The lesson</th></tr>
+<tr><td>BlockTable ids desynced from storage slots after free→realloc</td><td>Data-structure invariants must be TESTED, not assumed; identity mappings beat clever indirection</td></tr>
+<tr><td>RoPE broadcast [T,1,hf] vs [H,T,hf]</td><td>Tensor broadcasting bugs are silent — property tests catch them</td></tr>
+<tr><td>Triton rejects <code>continue</code></td><td>DSL compilers have grammar limits — know them before designing loops</td></tr>
+<tr><td>−inf − (−inf) = NaN poisoning</td><td>FlashAttention-style accumulators need FINITE negative floors (−1e30), not −inf</td></tr>
+<tr><td>Cross-graph param naming collision</td><td>Identity must come from MEANING (declaration ordinal), not allocation accident</td></tr>
+<tr><td>AirTel DNS poisoning of tunnel services</td><td>Infrastructure hostility is real; CDN mirrors + DoH IP pinning are the tools</td></tr>
+</table>
+
+<div class="pagebreak"></div>
+<h2>7 · Future phases — the detailed plan</h2>
+
+<div class="phase"><h3>PHASE 1-C · Finish the scaffold (now → short)</h3>
+<b>Goal:</b> close remaining local gaps.<br>
+<b>Tasks:</b>
+<ul>
+<li>Placement-head scaling study on Colab T4: sweep d_model ∈ {16,32,64} × epochs {5,10,20}; publish the accuracy-vs-config table.</li>
+<li>Activate C++ parity locally: <code>sudo apt install python3.12-dev</code> (user action) → build.sh → differential suite runs.</li>
+<li>Permutation-aware comparison already lands for d≤32; extend golden oracle to multi-token-per-block (removing the documented simplification).</li>
+<li>Wire <code>ecc verify-manifest</code> pairs automatically from agent landings (currently semi-manual JSON).</li>
+</ul>
+<b>Exit criteria:</b> zero code skips except GPU legs; parity suite live; scaling table committed.</div>
+
+<div class="phase"><h3>PHASE 2-A · Make the toy policy REAL (Colab T4)</h3>
+<b>Goal:</b> replace PhantomPolicy (mean-pool stub) with a small transformer diffusion model that actually denoises code buffers.<br>
+<b>Tasks (ordered):</b>
+<ul>
+<li>Mini-diffusion backbone: 4-layer transformer, d_model=128, rotary positions, vocab = our tokenizer Vocab (~few hundred entries at toy scale).</li>
+<li>Training objective: masked-token prediction on stage-1 curriculum instances (SFT warmup, paper curriculum phase 1).</li>
+<li>Coupled-GRPO fine-tune: antithetic pairs from grpo.py; rewards = fuzzy proxies computed by ACTUALLY parsing/type-checking outputs (ast.parse + a type stub pass).</li>
+<li>Success metric: on held-out corruption instances, EXPAND-at-gap placement ≥ 2× the SFT-only checkpoint, and generated completions parse ≥ 95%.</li>
+<li>Deliverables: checkpoint_w9.pt, training curves, ablation (no antithetic pairing vs paired — validating the variance-reduction claim empirically).</li>
+</ul>
+<b>Compute:</b> T4 16 GB suffices (model ≤ 25 M params); est. 4–8 GPU-hours.<br>
+<b>Risks:</b> reward sparsity → mitigate with curriculum staging already built; overfitting tiny data → hold-out gates exist.</div>
+
+<div class="phase"><h3>PHASE 2-B · Kernel meets the real model (T4 → local RTX 3050)</h3>
+<b>Goal:</b> run the trained model's attention THROUGH the block-sparse Triton path end-to-end.<br>
+<b>Tasks:</b>
+<ul>
+<li>Install CUDA-torch + triton locally (parallel-resume downloader pattern proven; ~2.5 GB).</li>
+<li>Convert PhantomLoop's logical operations to block-table operations (bridge exists conceptually; implement + differential test vs Python reference).</li>
+<li>Capture one 64-token AOT graph; replay across chains; validate vs eager mode bitwise-bounded.</li>
+<li>Latency budget measurement against the paper's sub-200 ms target.</li>
+</ul>
+<b>Exit criteria:</b> identical outputs (tolerance-bounded) between dense reference and block-sparse path on random tables at d_head=32; latency measured and logged.</div>
+
+<div class="phase"><h3>PHASE 3 · Serving &amp; IDE prototype</h3>
+<b>Goal:</b> the Module-6 story made real for a user.<br>
+<b>Tasks:</b>
+<ul>
+<li>Package supervisor+workers as a service (FastAPI wrapper around serving.py semantics; workers as separate processes).</li>
+<li>Kill-and-respawn chaos testing (automated: kill -9 workers mid-stream; assert Safe Queue absorbs all).</li>
+<li>Minimal VS Code extension: select code → send to service → receive refactor + green/yellow badge from the dfg verifier.</li>
+<li>Office dashboard shows live requests (bridge already speaks JSON).</li>
+</ul>
+<b>Exit criteria:</b> a human edits code in the editor, gets a refactor with a mathematically-verified badge or an honest warning.</div>
+
+<div class="phase"><h3>PHASE 4 · Research artefacts</h3>
+<ul>
+<li>Benchmark suite: refactor-equivalence corpus (before/after pairs graded by verify_ssa) — the green/yellow ratio becomes measurable.</li>
+<li>Ablations: antithetic vs independent pairs; coupled vs uncoupled rewards; BackoffScheduler limit sweeps (feeds the SRE tuning story).</li>
+<li>Paper results section assembled from WAVELOG numbers + new benchmarks.</li>
+</ul></div>
+
+<div class="phase"><h3>STRETCH · Hardware-bound items (await resources)</h3>
+<ul>
+<li>GB10 Grace Blackwell ATS/TLB warmup reproduction (logic ships today; needs the silicon).</li>
+<li>C++ BlockTable parity execution (needs <code>sudo apt install python3.12-dev</code> on some box).</li>
+<li>Full-scale GRPO (&gt;4 GB VRAM policy training).</li>
+</ul></div>
+
+<h2>8 · Glossary</h2>
+<table>
+<tr><th>Term</th><th>Meaning</th></tr>
+<tr><td>Token / vocab</td><td>A chunk of text and its integer ID in the model's dictionary</td></tr>
+<tr><td>AST</td><td>Abstract Syntax Tree — the parser's structural view of code</td></tr>
+<tr><td>Masked diffusion</td><td>Generative modelling by iteratively un-masking a corrupted sequence</td></tr>
+<tr><td>[EXPAND]/[DELETE]</td><td>Control tokens letting the model grow/shrink the sequence structurally</td></tr>
+<tr><td>Phantom Padding</td><td>Fixed-size buffer + logical mask: growth without resizing memory</td></tr>
+<tr><td>Block table</td><td>Array-backed linked list mapping logical sequence chunks → physical 64-token blocks</td></tr>
+<tr><td>CUDA Graph</td><td>Pre-recorded GPU kernel sequence replayed with minimal CPU overhead</td></tr>
+<tr><td>RoPE</td><td>Rotary positional embedding: rotation making scores depend on relative distance</td></tr>
+<tr><td>Additive AST bias b_φ(i,j)</td><td>log-compressed shortest-path distances injected additively into attention scores</td></tr>
+<tr><td>Block-sparse scoping</td><td>Mask letting LOCAL regions attend globally+within-scope only; GLOBAL stays frozen</td></tr>
+<tr><td>e-graph / egg</td><td>Structure storing many equivalent expressions; equality saturation applies rewrite rules exhaustively</td></tr>
+<tr><td>Rice's theorem</td><td>Any non-trivial semantic property of programs is undecidable — hence caps + async verification</td></tr>
+<tr><td>SSA</td><td>Static Single Assignment: every value assigned exactly once</td></tr>
+<tr><td>Coupled-GRPO</td><td>RL scheme using complementary mask pairs so two views share one sequence's information</td></tr>
+<tr><td>Fuzzy Proxy reward</td><td>0.1·Parses + 0.3·TypeChecks + 0.6·PassesTests — fast heuristic stand-in for correctness</td></tr>
+<tr><td>Safe Queue</td><td>Degradation path: crashed-worker requests rerun on the dense Phase-1 backend</td></tr>
+<tr><td>Green/Yellow ratio</td><td>Fraction of refactors formally proven vs merely test-passed; SRE-tuned</td></tr>
+<tr><td>PyO3 / maturin</td><td>Rust↔Python bindings / wheel builder exposing the verifier to Python</td></tr>
+<tr><td>BackoffScheduler</td><td>egg scheduler banning over-firing rewrite rules temporarily (match 5000, ban 3)</td></tr>
+</table>
+
+<p style="margin-top:18px;font-style:italic;color:#555;">Companion documents: <b>Campaign Report</b> (what we did, defect log, GPU milestone) and <b>Architecture &amp; Novelty Analysis</b> (positioning vs prior art). Ledgers live in <code>.ecc/reports/</code>.</p>
+
+</body>
+</html>
